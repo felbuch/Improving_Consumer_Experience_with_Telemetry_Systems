@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from sklearn.linear_model import LinearRegression
 
 
 st.title('Customer Experience metrics')
@@ -56,15 +57,7 @@ if st.checkbox('Show product data'):
 ## Initialize model ###
 ######################
 
-intercept = 0.022649095842913088
-w = np.array([0.01927402, -0.00090217, -0.02436434,  0.00587104, -0.00253383,
-       -0.01159318, -0.00852396, -0.01359019,  0.0016901 ,  0.03455106,
-       -0.00401627, -0.00583471, -0.0121614 , -0.00535108, -0.00212911,
-       -0.0023867 , -0.00404204,  0.00191445,  0.02242074,  0.00179926,
-       -0.04573396, -0.01224608, -0.00255499,  0.10515191, -0.00619868,
-        0.06148885, -0.00286004,  0.00623183, -0.03669058, -0.00660404,
-       -0.00419707, -0.04966515,  0.00366485])
-
+model = LinearRegression()
 
 ###########################
 # Predict sr_esc_cnt_pf ##
@@ -104,6 +97,16 @@ features = ['sr_bug_cnt',
             'Product_Taco',
             'Product_Venus',
             'Product_Windex']
+
+X = product_data.loc[:,features].to_numpy()
+y = product_data.sr_esc_cnt_pf_lag.to_numpy()
+
+model.fit(X,y)
+
+yhat = model.predict(X)
+product_data['prediction'] = yhat
+prediction = product_data.loc[product_data.Date == most_recent_date, 'prediction']
+prediction = prediction.iloc[0]
 
 #########################
 #Process Control Chat ##
@@ -168,15 +171,13 @@ if metric == 'sr_esc_cnt_pf':
     #Show horizontal line on prediction for next month
     if st.checkbox('Show prediction for next month'):
         #calculate prediction
-        X = product_data.loc[product_data.Date == most_recent_date, features].to_numpy()
-        next_month_escalation_prediction = intercept + X.dot(w)
-        st.write('Next month escalation prediction',next_month_escalation_prediction)
+        st.write('Next month escalation prediction', round(prediction,2))
         #plot prediction
         pcc.add_shape(type='line',
                 x0=min(product_data.Date),
-                y0=next_month_escalation_prediction[0],
+                y0=prediction,
                 x1=max(product_data.Date),
-                y1=next_month_escalation_prediction[0],
+                y1=prediction,
                 line=dict(color='Green', dash='dash'),
                 xref='x',
                 yref='y'
@@ -185,22 +186,39 @@ if metric == 'sr_esc_cnt_pf':
 
 st.plotly_chart(pcc, use_container_width=True)
 
-################################
-## Examine overall algorithm ##
-###############################
+#####################
+##  List Warnings ##
+####################
 
-data['predictions'] = data.loc[:,features].apply(lambda x: intercept + x.dot(w), axis = 1)
-data['mean'] = data.loc[:,['Product','sr_esc_cnt_pf']].dropna().groupby('Product').mean()
-
-
-data.loc[:,['Date','Product','predictions','mean']]
-
-#data['mean'] = data.loc[:,['Product','sr_esc_cnt_pf']].groupby('Product').mean()
-#data['s'] = data.loc[:,['Product','sr_esc_cnt_pf']].groupby('Product').std()
-#data['UCL'] = data.mean + z * data.s
-#data['LCL'] = data.mean - z * data.s
-#data['warning'] = (data.predictions > data.UCL) | (data.predictions < data.LCL)
-data.head()
+#Show original (raw) dataset if requested by user
+if st.checkbox('Show warnings signs, if any'):
+    
+    flagged = []
+    for prod in set(data.Product):
+        try:
+            temp = data.loc[data.Product == prod]
+            X = temp.loc[:,features].to_numpy()
+            y = temp.sr_esc_cnt_pf_lag.to_numpy()
+            model.fit(X,y)
+            yhat = model.predict(X)
+            temp['prediction'] = yhat
+            prediction = temp.loc[temp.Date == most_recent_date, 'prediction']
+            yhat = prediction.iloc[0]   
+            mean = np.mean(y)
+            sd = np.std(y)
+            UCL = mean + z * sd
+            LCL = mean - z * sd
+            warn = (yhat > UCL) | (yhat < LCL)
+            if warn:
+                flagged.append(prod)
+        except:
+            pass
+    
+    if flagged == []:
+        st.write('No products were flagged')
+    else:
+        for prod in flagged:
+            st.write(prod)
 
 
 
