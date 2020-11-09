@@ -9,7 +9,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from sklearn.linear_model import LinearRegression
 
 
 st.title('Customer Experience metrics')
@@ -18,7 +17,7 @@ st.title('Customer Experience metrics')
 ## Initialize data ###
 ######################
 
-#Load data
+#Define function to load data
 @st.cache
 def load_data(file_name):
     
@@ -26,8 +25,23 @@ def load_data(file_name):
     data = pd.read_csv(file)
     return data
 
-data_load_state = st.text('Loading data...')
-data = load_data('data.csv')
+#Load data
+data = load_data('data.csv') # for control charts
+st.text('Data loaded succesfully')
+
+#Load coefficients
+darg = load_data('data_reg.csv') # for regression
+coef = load_data('ICE_coefficients_2.csv')
+st.text('Machine Learning model loaded succesfully')
+
+#drop unnamed 0 column
+data = data.drop(columns=['Unnamed: 0'])
+darg = darg.drop(columns=['Unnamed: 0'])
+coef = coef.drop(columns=['Unnamed: 0'])
+
+##############################
+## User initial selections ###
+##############################
 
 #Select market
 market = st.selectbox(
@@ -43,8 +57,88 @@ product= st.selectbox(
     )
 st.write('You selected product:', product)
 
+
+#######################
+## Data processing ###
+######################
+
 #Subset data
 product_data = data.loc[data.Product == product]
+product_darg = darg.loc[darg.Product == product]
+product_coef = coef.loc[coef.Product == product]
+
+#Sort data
+product_data = product_data.sort_values('Date')
+
+
+#Prepare feature vector for prediction
+
+def make_X(df):
+    '''
+    Parameters
+    ----------
+    df : DataFrame
+        product_darg dataframe
+
+    Returns
+    -------
+    A pandas Series with the features to be used for prediction
+
+    '''
+    t = df.shape[0] + 1
+    
+    #Which columns do we have coefficients for
+    cols = ['sr_bug_cnt',
+            'sr_hwr_cnt_pf',
+            'sr_init_sev_1_2_cnt_pf',
+            'sr_esc_cnt_pf',
+            'sr_bug_cnt_mean',
+            'sr_bug_cnt_std',
+            'sr_hwr_cnt_pf_mean',
+            'sr_hwr_cnt_pf_std',
+            'sr_init_sev_1_2_cnt_pf_mean',
+            'sr_init_sev_1_2_cnt_pf_std',
+            'sr_esc_cnt_pf_mean',
+            'sr_esc_cnt_pf_std']
+    
+    X = (df.
+         loc[:, cols]. #select only relevant columns from X
+         apply(pd.to_numeric).
+         assign(t = t). #create time variable
+         assign(t2 = t**2) #create its square
+         )
+    X.insert(0,'intercept',1) #insert 1 for intercept column
+    X = X.iloc[-1,:] #get last row
+    return(X)
+    
+def make_beta(df):
+    '''
+    
+
+    Parameters
+    ----------
+    df : Pandas DataFrame
+        product_coef
+    Returns
+    -------
+    A Pandas Series of coefficients to be used for prediction
+
+    '''
+    #Prepare coefficient vector for prediction
+    beta = (product_coef.
+            drop(columns='Product').
+            apply(pd.to_numeric).
+            T
+            )
+    
+    return(beta)
+
+X = make_X(product_darg)
+beta = make_beta(product_coef)
+  
+#Make prediction
+prediction = X @ beta
+prediction = prediction.iloc[0]
 
 #Show original (raw) dataset if requested by user
 if st.checkbox('Show product data'):
@@ -52,67 +146,13 @@ if st.checkbox('Show product data'):
     raw_data.loc[raw_data.Product == product]
 
 
-
-######################
-## Initialize model ###
-######################
-
-model = LinearRegression()
-
-###########################
-# Predict sr_esc_cnt_pf ##
-##########################
-
-most_recent_date = max(product_data.Date)
-features = ['sr_bug_cnt',
-            'sr_hwr_cnt_pf',
-            'sr_init_sev_1_2_cnt_pf', 
-            'sr_esc_cnt_pf', 
-            'Market_Computing Systems',
-            'Market_Data Center Networking',
-            'Market_Enterprise Routing',
-            'Market_Enterprise Switching', 
-            'Market_Security',
-            'Market_Service Provider Routing',
-            'Product_Anastasia',
-            'Product_Belle',
-            'Product_Brownbear',
-            'Product_Burrito',
-            'Product_Centauri',
-            'Product_Diana',
-            'Product_Fajita',
-            'Product_Fiona',
-            'Product_Grizzlybear',
-            'Product_Jasmine',
-            'Product_Jupiter',
-            'Product_Littlebear',
-            'Product_Mamabear',
-            'Product_Mars',
-            'Product_Mr_Clean',
-            'Product_Neptune',
-            'Product_Orion',
-            'Product_Papabear',
-            'Product_Pluto',
-            'Product_Rigel',
-            'Product_Taco',
-            'Product_Venus',
-            'Product_Windex']
-
-X = product_data.loc[:,features].to_numpy()
-y = product_data.sr_esc_cnt_pf_lag.to_numpy()
-
-model.fit(X,y)
-
-yhat = model.predict(X)
-product_data['prediction'] = yhat
-prediction = product_data.loc[product_data.Date == most_recent_date, 'prediction']
-prediction = prediction.iloc[0]
-
 #########################
 #Process Control Chat ##
 ########################
 
 st.subheader('Statistical Quality Control chart')
+
+user_z = st.slider('Spread of control limits', 1., 6., 2.66, 0.01)
 
 #Select metric
 metric = st.selectbox(
@@ -120,11 +160,35 @@ metric = st.selectbox(
     ('sr_bug_cnt','sr_hwr_cnt_pf','sr_init_sev_1_2_cnt_pf','sr_esc_cnt_pf')
     )
 
-mean = product_data.loc[:,metric].mean()
-std= product_data.loc[:,metric].std()
-z = 2.66
-UCL= mean + z * std
-LCL= mean - z * std
+def pcc_params(df, m, z):
+    '''
+    Calculates parameters for pcc, such as mean and control limits
+
+    Parameters
+    ----------
+    df : dataframe
+        product_data dataframe.
+    m : str
+        metric being observed in the process control chart.
+    z : float, optional
+        Number of standard deviations between mean and CLs.
+
+    Returns
+    -------
+    A tuple containing mean, standard deviation, UCL and LCL
+
+    '''
+    
+    mean = df.loc[:,m].mean()
+    std= df.loc[:,m].std()
+    UCL= mean + z * std
+    LCL= mean - z * std
+    
+    return((mean, std, UCL, LCL))
+    
+mean, std, UCL, LCL = pcc_params(df = product_data, m = metric, z = user_z)    
+
+#Define control limits style in plot
 CL_style = dict(color = 'Red', dash='dash')
 
 #metric evolution
@@ -167,9 +231,15 @@ pcc.add_shape(type='line',
                 yref='y'
                 )
 
+#######################################
+##  Option button to see prediction ##
+######################################
+
+
 if metric == 'sr_esc_cnt_pf':
     #Show horizontal line on prediction for next month
-    if st.checkbox('Show prediction for next month'):
+    show_prediction = st.checkbox('Show prediction for next month')
+    if show_prediction:
         #calculate prediction
         st.write('Next month escalation prediction', round(prediction,2))
         #plot prediction
@@ -182,9 +252,24 @@ if metric == 'sr_esc_cnt_pf':
                 xref='x',
                 yref='y'
                 )
-
-
+        
+#Show Process Control Chart
 st.plotly_chart(pcc, use_container_width=True)
+
+if "show_prediction" in globals():        
+    if show_prediction:
+        #Show contributions
+        if st.checkbox('Show factors affecting escalation prediction'):
+            df = product_coef.drop(columns=['Product','intercept']).T.reset_index()
+            df.columns = ['feature','contribution']
+            df['importance'] =  round(df.contribution / np.mean(df.contribution), 4) #express in %
+            pie = px.pie(data_frame = df,
+                         names = 'feature', 
+                         values = 'importance'
+                         )
+                
+            st.plotly_chart(pie)
+    
 
 #####################
 ##  List Warnings ##
@@ -196,19 +281,19 @@ if st.checkbox('Show warnings signs, if any'):
     flagged = []
     for prod in set(data.Product):
         try:
-            temp = data.loc[data.Product == prod]
-            X = temp.loc[:,features].to_numpy()
-            y = temp.sr_esc_cnt_pf_lag.to_numpy()
-            model.fit(X,y)
-            yhat = model.predict(X)
-            temp['prediction'] = yhat
-            prediction = temp.loc[temp.Date == most_recent_date, 'prediction']
-            yhat = prediction.iloc[0]   
-            mean = np.mean(y)
-            sd = np.std(y)
-            UCL = mean + z * sd
-            LCL = mean - z * sd
-            warn = (yhat > UCL) | (yhat < LCL)
+            temp_darg = darg.loc[darg.Product == prod]
+            temp_coef = coef.loc[coef.Product == prod]
+            temp_X = make_X(temp_darg)
+            temp_beta = make_beta(temp_coef)
+            temp_pred = temp_X @ temp_beta
+            
+            temp_y = temp_darg.sr_esc_cnt_pf_lag
+            
+            mean = np.mean(temp_y)
+            sd = np.std(temp_y)
+            UCL = mean + user_z * sd
+            LCL = mean - user_z * sd
+            warn = (temp_pred > UCL) | (temp_pred < LCL)
             if warn:
                 flagged.append(prod)
         except:
