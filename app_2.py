@@ -26,7 +26,7 @@ def load_data(file_name):
     return data
 
 #Load data
-data = load_data('data.csv') # for control charts
+data_original = load_data('data_2.csv') # for control charts
 st.text('Data loaded succesfully')
 
 #Load coefficients
@@ -35,9 +35,17 @@ coef = load_data('ICE_coefficients_2.csv')
 st.text('Machine Learning model loaded succesfully')
 
 #drop unnamed 0 column
-data = data.drop(columns=['Unnamed: 0'])
+#data = data.drop(columns=['Unnamed: 0'])
 darg = darg.drop(columns=['Unnamed: 0'])
 coef = coef.drop(columns=['Unnamed: 0'])
+
+#Normalize metrics
+data = data_original.copy()
+data['sr_bug_cnt'] = data.sr_bug_cnt / data.sr_cnt_pf
+data['sr_hwr_cnt_pf'] = data.sr_hwr_cnt_pf / data.sr_cnt_pf
+data['sr_init_sev_1_2_cnt_pf'] = data.sr_init_sev_1_2_cnt_pf / data.sr_cnt_pf
+data['sr_esc_cnt_pf'] = data.sr_esc_cnt_pf/ data.sr_cnt_pf
+data = data.drop(columns='sr_cnt_pf')
 
 ##############################
 ## User initial selections ###
