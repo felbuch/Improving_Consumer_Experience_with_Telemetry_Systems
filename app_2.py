@@ -314,32 +314,3 @@ if st.checkbox('Show warnings signs, if any'):
             st.write(prod)
 
 
-
-################################
-## Examine overall algorithm ##
-###############################
-
-st.subheader('Appendix')
-
-
-if st.checkbox('Evaluate predictive quality of algorithm'):
-    error_plot = px.scatter(data, 
-                            x = 'sr_esc_cnt_pf_lag',
-                            y = 'Label',
-                            trendline='ols',
-                            range_x=(1e-3,0.25),
-                            range_y=(1e-3, 0.40),
-                            labels={'sr_esc_cnt_pf_lag': 'True value',
-                                    'Label': 'Predicted value'},
-                            title='Comparison between true and predicted value (R2 = 93%)'
-                            )
-
-    error_plot.add_shape(type='line',
-                         x0 = 0,
-                         y0 = 0,
-                         x1 = 1,
-                         y1 = 1
-                         )
-    
-    st.plotly_chart(error_plot, use_container_width=True)
-
